@@ -2,27 +2,60 @@ from django.db import transaction
 from django.db.models import Sum
 from rest_framework import generics, viewsets, status
 from rest_framework.views import APIView
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.response import Response
-from rest_framework.decorators import permission_classes, api_view, action
+from rest_framework.decorators import permission_classes, api_view, action, throttle_classes
 from django.contrib.auth.models import User, Group
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from .serializers import MenuItemSerializer, UserSerializer, CartSerializer, OrderItemSerializer, OrderSerializer
 from .models import MenuItem, Cart, OrderItem, Order
 from .permissions import AllowManagerCrudReadAll, AllowManagerOnly, AllowCustomerOnly, AllowDeliveryCrewOnly
 from datetime import date
+from django.core.paginator import Paginator, EmptyPage
 
+
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowManagerCrudReadAll | IsAdminUser])
 class MenuItemView(generics.ListCreateAPIView):
-    queryset = MenuItem.objects.all()
     serializer_class = MenuItemSerializer
 
+    def list(self, request):
+        queryset = MenuItem.objects.select_related('category').all()
 
+        # ordering:
+        ordering = request.query_params.get('ordering')
+        ordering_fields = ordering.split(',')
+        queryset = queryset.order_by(*ordering_fields)
+
+        # searching:
+        category = request.query_params.get('category')
+        to_price = request.query_params.get('to_price')
+        if category:
+            queryset = queryset.filter(category__title=category)
+        if to_price:
+            queryset = queryset.filter(price__lte=to_price)
+
+        # pagination
+        per_page = request.query_params.get('perpage', default=2)
+        page = request.query_params.get('page', default=1)
+        paginator = Paginator(queryset, per_page=per_page)
+        try:
+            queryset = paginator.page(number=page)
+        except EmptyPage:
+            queryset = []
+
+        serializer = self.serializer_class(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowManagerCrudReadAll | IsAdminUser])
 class SingleMenuItemView(generics.RetrieveUpdateAPIView, generics.DestroyAPIView):
     queryset = MenuItem.objects.all()
     serializer_class = MenuItemSerializer
 
 
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowManagerOnly | IsAdminUser])
 class ManagersViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -48,6 +81,7 @@ class ManagersViewSet(viewsets.ModelViewSet):
             return Response({'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowManagerOnly | IsAdminUser])
 class ManagersDestroyView(APIView):
 
@@ -63,6 +97,7 @@ class ManagersDestroyView(APIView):
             return Response({'message': 'Not found'}, status.HTTP_404_NOT_FOUND)
 
 
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowManagerOnly | IsAdminUser])
 class DeliveryViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -88,6 +123,7 @@ class DeliveryViewSet(viewsets.ModelViewSet):
             return Response({'message': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowManagerOnly | IsAdminUser])
 class DeliveryDestroyView(APIView):
 
@@ -103,6 +139,7 @@ class DeliveryDestroyView(APIView):
             return Response({'message': 'Not found'}, status.HTTP_404_NOT_FOUND)
 
 
+@throttle_classes([UserRateThrottle])
 @permission_classes([AllowCustomerOnly])
 class CartViewSet(viewsets.ViewSet):
     queryset = Cart.objects.all()
@@ -130,6 +167,7 @@ class CartViewSet(viewsets.ViewSet):
         return Response({'message': 'Ok'}, status=status.HTTP_200_OK)
 
 
+@throttle_classes([UserRateThrottle])
 class OrderItemViewSet(viewsets.ViewSet):
     queryset = OrderItem.objects.all()
     serializer_class = OrderItemSerializer
@@ -138,17 +176,28 @@ class OrderItemViewSet(viewsets.ViewSet):
         # Create instances of the permission classes
         customer_permission = AllowCustomerOnly()
         manager_permission = AllowManagerOnly()
+        delivery_crew_permission = AllowDeliveryCrewOnly()
+
         # customers list operation:
         if customer_permission.has_permission(request, self):
             queryset = self.queryset.filter(order=request.user)
             serializer = self.serializer_class(queryset, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-    #     managers list operation:
+        # managers list operation:
         if manager_permission.has_permission(request, self):
             queryset = Order.objects.all()
             serializer = OrderSerializer(queryset, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
+
+        # delivery crew operation:
+        if delivery_crew_permission.has_permission(request, self):
+            queryset = Order.objects.filter(delivery_crew=request.user)
+            serializer = OrderSerializer(queryset, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        else:
+            return Response(status=status.HTTP_401_UNAUTHORIZED)
 
     def create(self, request):
         customer_permission = AllowCustomerOnly()
@@ -187,3 +236,79 @@ class OrderItemViewSet(viewsets.ViewSet):
                 return Response(status.HTTP_400_BAD_REQUEST)
         else:
             return Response(status.HTTP_400_BAD_REQUEST)
+
+
+@throttle_classes([UserRateThrottle])
+class OrderViewSet(viewsets.ViewSet):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializer
+
+    def list(self, request, *args, **kwargs):
+        # Create instances of the permission classes
+        customer_permission = AllowCustomerOnly()
+        # customers list operation:
+        if customer_permission.has_permission(request, self):
+            order_id = kwargs['orderId']
+            order = Order.objects.get(pk=order_id)
+            if order.user != request.user:
+                return Response({'message': 'Unauthorized'}, status=status.HTTP_403_FORBIDDEN)
+            else:
+                queryset = OrderItem.objects.filter(order=request.user)
+                serializer = OrderItemSerializer(queryset, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        else:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+    def update(self, request, pk=None):
+        pass
+
+    def partial_update(self, request, pk=None, *args, **kwargs):
+        manager_permission = AllowManagerOnly()
+        delivery_permission = AllowDeliveryCrewOnly()
+
+        if manager_permission.has_permission(request, self):
+            order_id = kwargs['orderId']
+            # delivery crew assignment:
+            delivery_crew = None
+            try:
+                delivery_crew = request.data['delivery_crew']
+            except Exception:
+                pass
+            if delivery_crew is not None:
+                order = Order.objects.get(pk=order_id)
+                order.delivery_crew_id = delivery_crew
+                order.save()
+                return Response(status=status.HTTP_200_OK)
+            else:
+                return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        if delivery_permission.has_permission(request, self):
+            order_id = kwargs['orderId']
+            # status assignment:
+            delivery_status = None
+            try:
+                delivery_status = request.data['status']
+            except Exception:
+                pass
+            if delivery_status is not None:
+                order = Order.objects.get(pk=order_id)
+                if order.delivery_crew == request.user:
+                    order.status = delivery_status
+                    order.save()
+                    return Response(status=status.HTTP_200_OK)
+                else:
+                    return Response(status=status.HTTP_401_UNAUTHORIZED)
+            else:
+                return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        else:
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+    def destroy(self, request, pk=None, *args, **kwargs):
+        manager_permission = AllowManagerOnly()
+        if manager_permission.has_permission(request, self):
+            order_id = kwargs['orderId']
+            order = Order.objects.get(pk=order_id)
+            order.delete()
+        else:
+            return Response(status=status.HTTP_403_FORBIDDEN)

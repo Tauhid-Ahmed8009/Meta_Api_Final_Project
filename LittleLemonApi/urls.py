@@ -23,7 +23,13 @@ urlpatterns = [
         'get': 'list',
         'post': 'create',
         'delete': 'destroy'
-    }))
+    })),
+    path('orders/<str:orderId>', views.OrderViewSet.as_view({
+        'get': 'list',
+        'put': 'update',
+        'patch': 'partial_update',
+        'delete': 'destroy',
+     })),
 ]
 
 urlpatterns += router.urls
