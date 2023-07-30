@@ -115,6 +115,7 @@ Implement proper filtering, pagination and sorting capabilities for /api/menu-it
 
 ## Throttling
 
-Finally, apply some throttling for the authenticated users and anonymous or unauthenticated users. Review the video [Setting up API throttling](https://www.coursera.org/teach/apis/g98MzcdAEeyduw6ktL3Xvw/content/item/lecture/rPE4B/video-subtitles) and the reading [API throttling for class-based views](https://www.coursera.org/teach/apis/g98MzcdAEeyduw6ktL3Xvw/content/item/supplement/1h6WO) for guidance.# Project structure and API routes
+Finally, apply some throttling for the authenticated users and anonymous or unauthenticated users. Review the video [Setting up API throttling](https://www.coursera.org/teach/apis/g98MzcdAEeyduw6ktL3Xvw/content/item/lecture/rPE4B/video-subtitles) and the reading [API throttling for class-based views](https://www.coursera.org/teach/apis/g98MzcdAEeyduw6ktL3Xvw/content/item/supplement/1h6WO) for guidance.
+
 markdown created by Tauhid Ahmed
 
